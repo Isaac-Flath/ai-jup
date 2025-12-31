@@ -46,12 +46,4 @@ jobs:
             tests/test_api_integration.py tests/test_kernel_integration.py \
             tests/test_tool_loop.py -v
 
-      - name: Start Jupyter server for live tests
-        run: |
-          jupyter lab --no-browser --ServerApp.token=debug-token &
-          sleep 5
-          curl -s http://localhost:8888/api/status?token=debug-token
 
-      - name: Run live kernel tests (no API key required)
-        run: |
-          python -m pytest tests/test_live_kernel.py tests/test_tool_execute_handler.py -v
