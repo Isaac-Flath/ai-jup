@@ -61,7 +61,7 @@ Or create your own:
 
 1. Press `Cmd + Shift + P` (Mac) or `Ctrl + Shift + P` (Windows/Linux) to insert a prompt cell
 2. Type: `What is 2 + 2?`
-3. Press `Cmd + Shift + Enter` (Mac) or `Ctrl + Shift + Enter` (Windows/Linux) to execute
+3. Press `Shift + Enter` to execute
 
 You should see the AI respond with streaming text.
 
@@ -78,7 +78,7 @@ Then in a prompt cell:
 What is the sum of $`data`?
 ```
 
-Press `Cmd + Shift + Enter` (Mac) or `Ctrl + Shift + Enter` (Windows/Linux) to execute.
+Press `Shift + Enter` to execute.
 
 ## Syntax
 
@@ -199,7 +199,7 @@ Tool results are automatically formatted:
 | Shortcut (Mac) | Shortcut (Windows/Linux) | Action |
 |----------------|--------------------------|--------|
 | `Cmd + Shift + P` | `Ctrl + Shift + P` | Insert new prompt cell below |
-| `Cmd + Shift + Enter` | `Ctrl + Shift + Enter` | Execute prompt cell |
+| `Shift + Enter` | `Shift + Enter` | Execute prompt cell |
 
 ## Configuration
 
