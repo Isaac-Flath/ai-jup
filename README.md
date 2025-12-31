@@ -280,18 +280,6 @@ ai-jup/
 | `/ai-jup/tool-execute` | POST | Execute a single tool call |
 | `/ai-jup/models` | GET | List available models |
 
-## Comparison with Solveit
-
-| Feature | Solveit | ai-jup |
-|---------|---------|--------|
-| Variable syntax | `` $`varname` `` | `` $`varname` `` |
-| Function syntax | `` &`funcname` `` | `` &`funcname` `` |
-| Platform | VS Code | JupyterLab |
-| API | Multiple providers | Anthropic Claude |
-| File tools | Built-in | fastcore.tools |
-
-ai-jup uses the same syntax as Solveit for compatibility.
-
 ## Troubleshooting
 
 ### Extension not loading after install
