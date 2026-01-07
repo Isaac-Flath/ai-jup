@@ -11,7 +11,7 @@ A JupyterLab extension that adds AI-powered prompt cells with special syntax for
 
 - **`` $`variable` ``** - Reference kernel variables in prompts (values substituted automatically)
 - **`` &`function` ``** - Expose Python functions as AI-callable tools
-- **Streaming responses** - Real-time SSE streaming from Anthropic's Claude
+- **Streaming responses** - Real-time SSE streaming from OpenAI, Anthropic, or Gemini
 - **Full context** - AI sees all preceding code cells and kernel state
 - **Tool loop** - AI can call multiple tools in sequence to complete tasks
 - **Built-in file tools** - Includes `fastcore.tools` for file exploration and editing
@@ -33,19 +33,20 @@ jupyter labextension list | grep ai-jup
 
 ### 2. Set your API key
 
+Set the API key for your chosen provider:
+
 ```bash
+# For Anthropic (default)
 export ANTHROPIC_API_KEY="your-key-here"
+
+# For OpenAI
+export OPENAI_API_KEY="your-key-here"
+
+# For Gemini
+export GEMINI_API_KEY="your-key-here"
 ```
 
-To persist across sessions, add to your shell profile:
-
-```bash
-# For zsh (macOS default)
-echo 'export ANTHROPIC_API_KEY="your-key-here"' >> ~/.zshrc
-
-# For bash
-echo 'export ANTHROPIC_API_KEY="your-key-here"' >> ~/.bashrc
-```
+To persist across sessions, add to your shell profile (e.g., `~/.zshrc` or `~/.bashrc`).
 
 ### 3. Start JupyterLab
 
