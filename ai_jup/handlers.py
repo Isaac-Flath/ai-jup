@@ -1,6 +1,5 @@
 """Server handlers for AI prompt processing."""
 import json
-import os
 import re
 
 from jupyter_server.base.handlers import APIHandler
@@ -12,10 +11,10 @@ from tornado.iostream import StreamClosedError
 TOOL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 try:
-    import anthropic
-    HAS_ANTHROPIC = True
+    import litellm
+    HAS_LITELLM = True
 except ImportError:
-    HAS_ANTHROPIC = False
+    HAS_LITELLM = False
 
 
 def _validate_tool_args(tool_args):
@@ -136,18 +135,10 @@ class PromptHandler(APIHandler):
             self.set_header("Cache-Control", "no-cache")
             self.set_header("Connection", "keep-alive")
 
-            if not HAS_ANTHROPIC:
+            if not HAS_LITELLM:
                 self.set_status(500)
-                self.finish({"error": "anthropic package not installed"})
+                self.finish({"error": "litellm package not installed"})
                 return
-
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
-            if not api_key:
-                self.set_status(500)
-                self.finish({"error": "ANTHROPIC_API_KEY environment variable not set"})
-                return
-
-            client = anthropic.AsyncAnthropic(api_key=api_key)
             
             tools = self._build_tools(functions)
             
@@ -158,74 +149,73 @@ class PromptHandler(APIHandler):
                 if kernel_manager:
                     kernel = kernel_manager.get_kernel(kernel_id)
             
-            messages = self._build_messages(conversation_history, prompt)
+            messages = self._build_messages(conversation_history, prompt, system_prompt)
             steps = 0
             
             while True:
-                current_tool_call = None
-                current_text_block = None
-                tool_input_buffer = ""
                 text_buffer = ""
-                assistant_content = []
+                tool_calls_in_progress = {}
+                completed_tool_calls = []
                 
-                async with client.messages.stream(
+                response = await litellm.acompletion(
                     model=model,
-                    max_tokens=4096,
-                    system=system_prompt,
                     messages=messages,
-                    tools=tools if tools else anthropic.NOT_GIVEN,
-                ) as stream:
-                    async for event in stream:
-                        if hasattr(event, 'type'):
-                            if event.type == 'content_block_delta':
-                                # Handle both text and tool input deltas
-                                if hasattr(event.delta, 'text'):
-                                    text_buffer += event.delta.text
-                                    await self._write_sse({"text": event.delta.text})
-                                if hasattr(event.delta, 'partial_json') and current_tool_call:
-                                    tool_input_buffer += event.delta.partial_json
-                                    await self._write_sse({"tool_input": event.delta.partial_json})
-                            elif event.type == 'content_block_start':
-                                if hasattr(event.content_block, 'type'):
-                                    if event.content_block.type == 'tool_use':
-                                        current_tool_call = {
-                                            "id": event.content_block.id,
-                                            "name": event.content_block.name
+                    max_tokens=4096,
+                    tools=tools if tools else None,
+                    stream=True,
+                )
+                
+                async for chunk in response:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if not delta:
+                        continue
+                    
+                    if delta.content:
+                        text_buffer += delta.content
+                        await self._write_sse({"text": delta.content})
+                    
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_in_progress:
+                                tool_calls_in_progress[idx] = {
+                                    "id": tc.id or "",
+                                    "name": tc.function.name if tc.function and tc.function.name else "",
+                                    "arguments": ""
+                                }
+                                if tc.id and tc.function and tc.function.name:
+                                    await self._write_sse({
+                                        "tool_call": {
+                                            "name": tc.function.name,
+                                            "id": tc.id
                                         }
-                                        tool_input_buffer = ""
-                                        await self._write_sse({
-                                            "tool_call": {
-                                                "name": event.content_block.name,
-                                                "id": event.content_block.id
-                                            }
-                                        })
-                                    elif event.content_block.type == 'text':
-                                        current_text_block = True
-                                        text_buffer = ""
-                            elif event.type == 'content_block_stop':
-                                # Capture completed content blocks for message history
-                                if current_tool_call:
-                                    try:
-                                        tool_args = json.loads(tool_input_buffer or "{}")
-                                    except json.JSONDecodeError:
-                                        tool_args = {"__invalid_json__": True, "__raw__": tool_input_buffer}
-                                    assistant_content.append({
-                                        "type": "tool_use",
-                                        "id": current_tool_call["id"],
-                                        "name": current_tool_call["name"],
-                                        "input": tool_args
                                     })
-                                    current_tool_call = None
-                                    tool_input_buffer = ""
-                                elif current_text_block and text_buffer:
-                                    assistant_content.append({
-                                        "type": "text",
-                                        "text": text_buffer
-                                    })
-                                    current_text_block = None
-                                    text_buffer = ""
-                            elif event.type == 'message_stop':
-                                pass  # Handled after stream closes
+                            
+                            if tc.function and tc.function.arguments:
+                                tool_calls_in_progress[idx]["arguments"] += tc.function.arguments
+                                await self._write_sse({"tool_input": tc.function.arguments})
+                
+                for tc_data in tool_calls_in_progress.values():
+                    try:
+                        tool_args = json.loads(tc_data["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        tool_args = {"__invalid_json__": True, "__raw__": tc_data["arguments"]}
+                    completed_tool_calls.append({
+                        "id": tc_data["id"],
+                        "name": tc_data["name"],
+                        "arguments": tool_args
+                    })
+                
+                assistant_content = []
+                if text_buffer:
+                    assistant_content.append({"type": "text", "text": text_buffer})
+                for tc in completed_tool_calls:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "input": tc["arguments"]
+                    })
                 
                 # Find tool use blocks in assistant_content
                 tool_use_blocks = [b for b in assistant_content if b.get("type") == "tool_use"]
@@ -309,18 +299,30 @@ class PromptHandler(APIHandler):
                     await self._write_sse({"done": True})
                     break
                 
-                # Build messages for next LLM call
-                # Add assistant message with ALL tool uses
-                messages.append({
-                    "role": "assistant",
-                    "content": assistant_content
-                })
+                # Build messages for next LLM call (OpenAI format for LiteLLM)
+                # Add assistant message with tool calls
+                assistant_msg = {"role": "assistant", "content": text_buffer or None}
+                if completed_tool_calls:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"])
+                            }
+                        }
+                        for tc in completed_tool_calls
+                    ]
+                messages.append(assistant_msg)
                 
-                # Add ALL tool results in a single user message
-                messages.append({
-                    "role": "user",
-                    "content": tool_results
-                })
+                # Add tool results as separate tool messages (OpenAI format)
+                for tr in tool_results:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tr["tool_use_id"],
+                        "content": tr["content"]
+                    })
                 
                 steps += 1
 
@@ -443,25 +445,20 @@ class PromptHandler(APIHandler):
         except Exception as e:
             return {"error": str(e), "status": "error"}
 
-    def _build_system_prompt(self, preceding_code: str, variables: dict, functions: dict, images: list = None, chart_specs: list = None) -> list:
-        """Build the system prompt with context as content blocks for caching.
+    def _build_system_prompt(self, preceding_code: str, variables: dict, functions: dict, images: list = None, chart_specs: list = None) -> tuple[str, list]:
+        """Build system prompt and image content for LiteLLM (OpenAI format).
         
-        Returns a list of content blocks suitable for Anthropic's system parameter.
-        The base instructions are cached (stable across calls), while dynamic
-        context (code, variables) is not cached.
-        
-        Args:
-            preceding_code: Code from preceding cells
-            variables: Variable info dict
-            functions: Function info dict
-            images: List of image context dicts with 'data', 'mimeType', 'source', 'cellIndex'
-            chart_specs: List of chart spec dicts with 'type', 'spec', 'cellIndex'
+        Returns:
+            Tuple of (system_prompt_string, image_content_list)
+            Images are returned separately since they go in user message for OpenAI format.
         """
         images = images or []
         chart_specs = chart_specs or []
         
-        # Base instructions - stable, cacheable (requires ~1024 tokens minimum)
-        base_instructions = (
+        parts = []
+        
+        # Base instructions
+        parts.append(
             "You are an AI assistant embedded in a Jupyter notebook. "
             "Help the user with their data science and programming tasks. "
             "When generating code, write Python that can be executed in the notebook. "
@@ -470,40 +467,27 @@ class PromptHandler(APIHandler):
             "Tools return rich results including DataFrames as HTML tables and matplotlib figures as images."
         )
         
-        # Add note about images if present
         if images:
-            base_instructions += (
-                f" You can see {len(images)} image(s) from the notebook - these are outputs from "
+            parts.append(
+                f"You can see {len(images)} image(s) from the notebook - these are outputs from "
                 "executed code cells or images attached to markdown cells. Refer to them in your response."
             )
         
-        # Add note about chart specs if present
         if chart_specs:
-            base_instructions += (
-                f" You also have access to {len(chart_specs)} chart specification(s) from the notebook - "
+            parts.append(
+                f"You also have access to {len(chart_specs)} chart specification(s) from the notebook - "
                 "these are Vega-Lite (Altair) or Plotly JSON specs that describe visualizations. "
                 "Use these specs to understand what the charts show."
             )
         
-        blocks = [
-            {
-                "type": "text",
-                "text": base_instructions,
-                "cache_control": {"type": "ephemeral"}
-            }
-        ]
-        
-        # Dynamic context - not cached since it changes per-cell
-        dynamic_parts = []
-        
         if preceding_code:
-            dynamic_parts.append(f"## Preceding Code Context\n```python\n{preceding_code}\n```")
+            parts.append(f"## Preceding Code Context\n```python\n{preceding_code}\n```")
         
         if variables:
             var_desc = "## Available Variables\n"
             for name, info in variables.items():
                 var_desc += f"- `{name}`: {info.get('type', 'unknown')} = {info.get('repr', 'N/A')}\n"
-            dynamic_parts.append(var_desc)
+            parts.append(var_desc)
         
         if functions:
             func_desc = "## Available Functions (you can call these as tools)\n"
@@ -511,66 +495,52 @@ class PromptHandler(APIHandler):
                 sig = info.get('signature', '()')
                 doc = info.get('docstring', 'No documentation')
                 func_desc += f"- `{name}{sig}`: {doc}\n"
-            dynamic_parts.append(func_desc)
+            parts.append(func_desc)
         
-        # Add chart specs as text context (LLMs can understand JSON specs)
         if chart_specs:
             for i, spec in enumerate(chart_specs):
                 chart_type = spec.get("type", "unknown")
                 cell_idx = spec.get("cellIndex", "?")
                 spec_data = spec.get("spec", {})
-                
-                # Format the spec type nicely
                 type_label = "Vega-Lite (Altair)" if chart_type == "vega-lite" else "Plotly"
-                
-                # Truncate large specs to avoid token overflow
                 spec_json = json.dumps(spec_data, indent=2)
                 if len(spec_json) > 5000:
                     spec_json = spec_json[:5000] + "\n... (truncated)"
-                
-                chart_desc = f"## Chart Specification {i+1} ({type_label} from cell {cell_idx})\n```json\n{spec_json}\n```"
-                dynamic_parts.append(chart_desc)
+                parts.append(f"## Chart Specification {i+1} ({type_label} from cell {cell_idx})\n```json\n{spec_json}\n```")
         
-        if dynamic_parts:
-            blocks.append({
-                "type": "text", 
-                "text": "\n\n".join(dynamic_parts)
-            })
-        
-        # Add images to context (Anthropic format)
+        # Build image content list for user message (OpenAI/LiteLLM format)
+        image_content = []
         for i, img in enumerate(images):
             source_desc = "cell output" if img.get("source") == "output" else "markdown attachment"
             cell_idx = img.get("cellIndex", "?")
-            
-            # Add description before image
-            blocks.append({
+            image_content.append({
                 "type": "text",
                 "text": f"## Image {i+1} (from {source_desc} in cell {cell_idx})"
             })
-            
-            # Add the image
-            blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": img.get("mimeType", "image/png"),
-                    "data": img.get("data", "")
+            mime_type = img.get("mimeType", "image/png")
+            data = img.get("data", "")
+            image_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{data}"
                 }
             })
         
-        return blocks
+        return "\n\n".join(parts), image_content
 
-    def _build_messages(self, conversation_history: list, current_prompt: str) -> list:
-        """Build the messages array including conversation history.
+    def _build_messages(self, conversation_history: list, current_prompt: str, system_prompt: tuple) -> list:
+        """Build the messages array including system and conversation history.
         
         Args:
             conversation_history: List of {"prompt": str, "response": str} turns
             current_prompt: The current user prompt
+            system_prompt: Tuple of (system_string, image_content_list) from _build_system_prompt
             
         Returns:
-            List of message dicts with alternating user/assistant roles
+            List of message dicts in OpenAI format
         """
-        messages = []
+        system_text, image_content = system_prompt
+        messages = [{"role": "system", "content": system_text}]
         
         for turn in conversation_history:
             prompt = turn.get("prompt", "")
@@ -580,36 +550,42 @@ class PromptHandler(APIHandler):
             if response:
                 messages.append({"role": "assistant", "content": response})
         
-        messages.append({"role": "user", "content": current_prompt})
+        # Build user message with text and images
+        if image_content:
+            user_content = image_content + [{"type": "text", "text": current_prompt}]
+            messages.append({"role": "user", "content": user_content})
+        else:
+            messages.append({"role": "user", "content": current_prompt})
+        
         return messages
 
     def _build_tools(self, functions: dict) -> list:
-        """Build Anthropic tool definitions from function info."""
+        """Build OpenAI-format tool definitions from function info."""
         tools = []
         for name, info in functions.items():
             params = info.get('parameters', {})
-            # Convert parameters to valid JSON Schema format
             properties = {}
             required = []
             for param_name, param_info in params.items():
-                # Convert Python type names to JSON Schema types
                 python_type = param_info.get('type', 'string')
                 json_type = self._python_type_to_json_schema(python_type)
                 properties[param_name] = {
                     "type": json_type,
                     "description": param_info.get('description', param_name)
                 }
-                # Only add to required if no default value
                 if 'default' not in param_info:
                     required.append(param_name)
             
             tool = {
-                "name": name,
-                "description": info.get('docstring', f"Call the {name} function"),
-                "input_schema": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": info.get('docstring', f"Call the {name} function"),
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required
+                    }
                 }
             }
             tools.append(tool)
@@ -799,16 +775,51 @@ class ToolExecuteHandler(APIHandler):
 
 
 class ModelsHandler(APIHandler):
-    """Handler for listing available models."""
+    """Handler for listing available vision models grouped by provider."""
 
     @authenticated
     def get(self):
-        models = [
-            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4"},
-            {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet"},
-            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
-        ]
-        self.finish(json.dumps({"models": models}))
+        from .models import get_vision_models_by_provider, get_provider_display_names
+        
+        models_by_provider = get_vision_models_by_provider()
+        provider_names = get_provider_display_names()
+        
+        self.finish(json.dumps({
+            "providers": provider_names,
+            "models": models_by_provider
+        }))
+
+
+class TestConnectionHandler(APIHandler):
+    """Handler for testing API key connectivity."""
+
+    @authenticated
+    async def post(self):
+        data = self.get_json_body() or {}
+        model = data.get("model", "")
+        
+        if not model:
+            self.set_status(400)
+            self.finish(json.dumps({"success": False, "error": "model is required"}))
+            return
+        
+        if not HAS_LITELLM:
+            self.finish(json.dumps({"success": False, "error": "litellm package not installed"}))
+            return
+        
+        try:
+            await litellm.acompletion(
+                model=model,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=1,
+            )
+            self.finish(json.dumps({"success": True, "model": model}))
+        except litellm.AuthenticationError as e:
+            self.finish(json.dumps({"success": False, "error": "Invalid API key", "details": str(e)}))
+        except litellm.NotFoundError as e:
+            self.finish(json.dumps({"success": False, "error": "Model not found", "details": str(e)}))
+        except Exception as e:
+            self.finish(json.dumps({"success": False, "error": str(e)}))
 
 
 def setup_handlers(web_app):
@@ -820,5 +831,6 @@ def setup_handlers(web_app):
         (url_path_join(base_url, "ai-jup", "prompt"), PromptHandler),
         (url_path_join(base_url, "ai-jup", "tool-execute"), ToolExecuteHandler),
         (url_path_join(base_url, "ai-jup", "models"), ModelsHandler),
+        (url_path_join(base_url, "ai-jup", "test-connection"), TestConnectionHandler),
     ]
     web_app.add_handlers(host_pattern, handlers)

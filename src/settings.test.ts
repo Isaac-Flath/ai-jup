@@ -16,6 +16,10 @@ describe('SettingsManager', () => {
   });
   
   describe('default values', () => {
+    it('should have default provider', () => {
+      expect(settings.provider).toBe('anthropic');
+    });
+    
     it('should have default model', () => {
       expect(settings.defaultModel).toBe('claude-sonnet-4-20250514');
     });
@@ -34,6 +38,7 @@ describe('SettingsManager', () => {
       const json = settings.toJSON();
       
       expect(json).toEqual({
+        provider: 'anthropic',
         defaultModel: 'claude-sonnet-4-20250514',
         maxToolSteps: 5,
         showConvertButton: true
@@ -64,6 +69,7 @@ describe('IExtensionSettings interface', () => {
     const settings = new SettingsManager();
     
     // These should all exist and be the correct types
+    expect(typeof settings.provider).toBe('string');
     expect(typeof settings.defaultModel).toBe('string');
     expect(typeof settings.maxToolSteps).toBe('number');
     expect(typeof settings.showConvertButton).toBe('boolean');

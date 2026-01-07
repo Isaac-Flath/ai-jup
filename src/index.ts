@@ -22,6 +22,7 @@ import { PromptCellManager } from './promptCell';
 import { KernelConnector } from './kernelConnector';
 import { SettingsManager } from './settings';
 import { CustomCellTypeSwitcher } from './cellTypeSwitcher';
+import { ModelPickerWidget } from './modelPicker';
 import {
   IPromptCellManager,
   IExtensionSettings,
@@ -98,13 +99,14 @@ const mainPlugin: JupyterFrontEndPlugin<void> = {
   id: PLUGIN_ID,
   description: 'AI-powered prompt cells for JupyterLab',
   autoStart: true,
-  requires: [INotebookTracker, IPromptCellManager, IKernelConnectorFactory],
+  requires: [INotebookTracker, IPromptCellManager, IKernelConnectorFactory, IExtensionSettings],
   optional: [ICommandPalette, IMainMenu],
   activate: (
     app: JupyterFrontEnd,
     notebookTracker: INotebookTracker,
     promptCellManager: IPromptCellManager,
     connectorFactory: IKernelConnectorFactory,
+    settings: IExtensionSettings,
     palette: ICommandPalette | null,
     mainMenu: IMainMenu | null
   ) => {
@@ -203,6 +205,10 @@ const mainPlugin: JupyterFrontEndPlugin<void> = {
           label: 'AI Prompt'
         });
         panel.toolbar.insertAfter('cellType', 'ai-jup-insert', button);
+        
+        // Add model picker to toolbar
+        const modelPicker = new ModelPickerWidget(settings);
+        panel.toolbar.insertAfter('ai-jup-insert', 'ai-jup-model-picker', modelPicker);
         
         // Use requestAnimationFrame to wait for cells to be rendered
         requestAnimationFrame(() => {

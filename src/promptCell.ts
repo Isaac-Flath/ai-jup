@@ -140,10 +140,9 @@ export class PromptCellManager implements IPromptCellManager {
     const cell = notebook.widgets[activeIndex];
     const model = cell.model;
 
-    // Mark as prompt cell
+    // Mark as prompt cell (no model stored - always use current settings)
     model.setMetadata(PROMPT_METADATA_KEY, {
-      isPromptCell: true,
-      model: 'claude-sonnet-4-20250514'
+      isPromptCell: true
     } as PromptMetadata);
 
     // Change to markdown type for the prompt

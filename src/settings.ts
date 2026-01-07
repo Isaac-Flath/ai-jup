@@ -14,6 +14,7 @@ const PLUGIN_ID = 'ai-jup:plugin';
  * Default settings values.
  */
 const DEFAULT_SETTINGS: IExtensionSettings = {
+  provider: 'anthropic',
   defaultModel: 'claude-sonnet-4-20250514',
   maxToolSteps: 5,
   showConvertButton: true
@@ -24,6 +25,7 @@ const DEFAULT_SETTINGS: IExtensionSettings = {
  */
 export class SettingsManager implements IExtensionSettings {
   private _settings: ISettingRegistry.ISettings | null = null;
+  private _provider: string = DEFAULT_SETTINGS.provider;
   private _defaultModel: string = DEFAULT_SETTINGS.defaultModel;
   private _maxToolSteps: number = DEFAULT_SETTINGS.maxToolSteps;
   private _showConvertButton: boolean = DEFAULT_SETTINGS.showConvertButton;
@@ -34,6 +36,10 @@ export class SettingsManager implements IExtensionSettings {
    */
   get settingsChanged(): ISignal<this, void> {
     return this._settingsChanged;
+  }
+
+  get provider(): string {
+    return this._provider;
   }
 
   get defaultModel(): string {
@@ -78,6 +84,7 @@ export class SettingsManager implements IExtensionSettings {
    */
   toJSON(): IExtensionSettings {
     return {
+      provider: this._provider,
       defaultModel: this._defaultModel,
       maxToolSteps: this._maxToolSteps,
       showConvertButton: this._showConvertButton
@@ -94,6 +101,8 @@ export class SettingsManager implements IExtensionSettings {
 
     const composite = this._settings.composite;
     
+    this._provider =
+      (composite['provider'] as string) ?? DEFAULT_SETTINGS.provider;
     this._defaultModel =
       (composite['defaultModel'] as string) ?? DEFAULT_SETTINGS.defaultModel;
     this._maxToolSteps =

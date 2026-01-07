@@ -254,6 +254,11 @@ export interface IPromptCellManager {
  */
 export interface IExtensionSettings {
   /**
+   * AI provider (openai, anthropic, gemini).
+   */
+  provider: string;
+
+  /**
    * Default model to use for prompts.
    */
   defaultModel: string;
